@@ -4,7 +4,17 @@ import com.sun.jna.Library;
 import com.sun.jna.Native;
 
 public interface DiscordRPC extends Library {
-    DiscordRPC INSTANCE = Native.load("discord-rpc", DiscordRPC.class);
+    DiscordRPC INSTANCE = load();
+
+    static DiscordRPC load() {
+        try {
+            return Native.load("discord-rpc", DiscordRPC.class);
+        } catch (Throwable t) {
+            System.err.println("[WexraClient] Discord RPC kutuphanesi yuklenemedi, Discord RPC ozelligi devre disi birakildi.");
+            t.printStackTrace();
+            return null;
+        }
+    }
     
     void Discord_UpdatePresence(final DiscordRichPresence p0);
     

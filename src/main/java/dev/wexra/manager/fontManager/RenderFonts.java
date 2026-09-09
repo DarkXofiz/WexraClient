@@ -534,11 +534,47 @@ public class RenderFonts implements Closeable, IMinecraft {
             int maxCharHeight = 0;
             CharMetrics[] metrics = new CharMetrics[range];
 
+            // NOT: Bu ortamda (Android/PojavLauncher, headless AWT) hem
+            // font.getStringBounds(...) hem de Graphics2D.getFontMetrics(...)
+            // HeadlessException firlatabiliyor - JDK ic mekanizmasi verilen
+            // FontRenderContext/Graphics'i yoksayip ekran cihazina erismeye
+            // calisiyor. Bu yuzden metrik probu tamamen catch(Throwable) ile
+            // sariyoruz; basarisiz olursa font boyutuna dayali guvenli bir
+            // tahmine geri donuyoruz ve asla istemciyi cokertmiyoruz.
+            FontMetrics probeMetrics = null;
+            try {
+                BufferedImage probeImage = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+                Graphics2D probeGraphics = probeImage.createGraphics();
+                try {
+                    probeMetrics = probeGraphics.getFontMetrics(font);
+                } finally {
+                    probeGraphics.dispose();
+                }
+            } catch (Throwable t) {
+                probeMetrics = null;
+            }
+
+            int fallbackSize = Math.max(1, Math.round(font.getSize2D()));
+
             for (int i = 0; i < range; i++) {
                 char c = (char) (fromIncl + i);
-                Rectangle2D bounds = font.getStringBounds(String.valueOf(c), fontRenderContext);
-                int w = (int) Math.ceil(bounds.getWidth());
-                int h = (int) Math.ceil(bounds.getHeight());
+                int w, h;
+                if (probeMetrics != null) {
+                    try {
+                        w = probeMetrics.charWidth(c);
+                        h = probeMetrics.getAscent() + probeMetrics.getDescent();
+                    } catch (Throwable t) {
+                        // Belirli bir karakter icin AWT yine de patlarsa,
+                        // istemciyi cokertmek yerine kaba tahmine geri don.
+                        w = fallbackSize;
+                        h = fallbackSize;
+                    }
+                } else {
+                    w = fallbackSize;
+                    h = fallbackSize;
+                }
+                if (w <= 0) w = 1;
+                if (h <= 0) h = 1;
                 maxCharWidth = Math.max(maxCharWidth, w);
                 maxCharHeight = Math.max(maxCharHeight, h);
                 metrics[i] = new CharMetrics(c, w, h);
@@ -562,8 +598,13 @@ public class RenderFonts implements Closeable, IMinecraft {
             g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
-            FontMetrics fm = g2d.getFontMetrics();
-            int baseAscent = fm.getAscent();
+            FontMetrics fm = null;
+            try {
+                fm = g2d.getFontMetrics();
+            } catch (Throwable t) {
+                fm = null;
+            }
+            int baseAscent = (fm != null) ? fm.getAscent() : Math.round(font.getSize2D() * 0.8f);
 
             for (int i = 0; i < metrics.length; i++) {
                 CharMetrics cm = metrics[i];
@@ -575,7 +616,12 @@ public class RenderFonts implements Closeable, IMinecraft {
 
                 Glyph glyph = new Glyph(x, y - baseAscent, cm.width, cm.height, cm.character, this);
                 glyphs.put(cm.character, glyph);
-                g2d.drawString(String.valueOf(cm.character), x, y);
+                try {
+                    g2d.drawString(String.valueOf(cm.character), x, y);
+                } catch (Throwable ignored) {
+                    // Bu karakter cizilemedi (ör. headless/font hatasi); bos birak,
+                    // istemciyi cokertme.
+                }
             }
 
             g2d.dispose();

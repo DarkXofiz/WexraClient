@@ -20,22 +20,30 @@ public class DiscordRCP extends Function {
 
     @Override
     public void onEvent(Event event) {
+        if (rpc == null) return; // Discord RPC kutuphanesi yuklenemedi, ozellik devre disi
         if (event instanceof EventUpdate) {
             startRpc();
         }
     }
 
     public synchronized void startRpc() {
-        if (started) return;
+        if (rpc == null || started) return;
         started = true;
-        DiscordEventHandlers handlers = new DiscordEventHandlers();
-        rpc.Discord_Initialize("1384873696375603281", handlers, true, "");
-        presence.startTimestamp = System.currentTimeMillis() / 1000L;
-        presence.largeImageText = "https://t.me/wexraclient";
+        try {
+            DiscordEventHandlers handlers = new DiscordEventHandlers();
+            rpc.Discord_Initialize("1384873696375603281", handlers, true, "");
+            presence.startTimestamp = System.currentTimeMillis() / 1000L;
+            presence.largeImageText = "https://t.me/wexraclient";
 
-        updatePresenceFields();
+            updatePresenceFields();
 
-        rpc.Discord_UpdatePresence(presence);
+            rpc.Discord_UpdatePresence(presence);
+        } catch (Throwable t) {
+            System.err.println("[WexraClient] Discord RPC baslatilamadi:");
+            t.printStackTrace();
+            started = false;
+            return;
+        }
 
         thread = new Thread(() -> {
             try {
@@ -49,6 +57,11 @@ public class DiscordRCP extends Function {
                     Thread.sleep(2000L);
                 }
             } catch (InterruptedException ignored) {
+            } catch (Throwable t) {
+                System.err.println("[WexraClient] Discord RPC dongusunde hata olustu, durduruluyor:");
+                t.printStackTrace();
+            } finally {
+                started = false;
             }
         }, "TH-RPC-Handler");
         thread.setDaemon(true);
@@ -73,6 +86,13 @@ public class DiscordRCP extends Function {
         if (thread != null && thread.isAlive()) {
             thread.interrupt();
         }
-        rpc.Discord_Shutdown();
+        if (rpc != null) {
+            try {
+                rpc.Discord_Shutdown();
+            } catch (Throwable t) {
+                System.err.println("[WexraClient] Discord RPC kapatilirken hata olustu:");
+                t.printStackTrace();
+            }
+        }
     }
 }
