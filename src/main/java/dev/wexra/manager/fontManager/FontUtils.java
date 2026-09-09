@@ -23,25 +23,47 @@ public class FontUtils {
     public static volatile RenderFonts[] icomoon = new RenderFonts[256];
 
     private boolean initialized = false;
+    private volatile boolean initStarted = false;
 
-    public synchronized void init() {
-        if (initialized) return;
+    // NOT: Bu ortamda (Android/PojavLauncher, headless AWT) java.awt.Font
+    // islemleri (createFont, deriveFont, FontRenderContext vb.) hata
+    // firlatmak yerine bazen JVM icinde sonsuza kadar bekleyebiliyor
+    // (hang). Bu yuzden butun font yukleme islemini ayri bir daemon
+    // thread'de yapiyoruz; boylece bu islem asla ana/render thread'ini
+    // bloklamaz. Oyun acilirken fontlar henuz hazir degilse, ilgili
+    // dizi elemani null kalir ve cizim kodu bunu atlamalidir - bu,
+    // istemcinin sonsuza kadar donmesinden cok daha iyi bir durumdur.
+    public void init() {
+        if (initStarted) return;
+        initStarted = true;
 
-        initializationFont(comfortaa, "comfortaa.ttf");
-        initializationFont(durman, "durman.ttf");
-        initializationFont(glitched, "glitched.ttf");
-        initializationFont(icons, "icons.ttf");
-        initializationFont(monsterrat, "monsterrat.ttf");
-        initializationFont(profont, "profont.ttf");
-        initializationFont(sf_bold, "sf_bold.ttf");
-        initializationFont(sf_medium, "sf_medium.ttf");
-        initializationFont(iconsWex, "iconsWex.ttf");
-        initializationFont(hud, "hud.ttf");
-        initializationFont(gilroy, "gilroy.ttf");
-        initializationFont(gilroy_bold, "gilroy-bold.ttf");
-        initializationFont(icomoon, "icomoon.ttf");
+        Thread fontThread = new Thread(() -> {
+            try {
+                initializationFont(comfortaa, "comfortaa.ttf");
+                initializationFont(durman, "durman.ttf");
+                initializationFont(glitched, "glitched.ttf");
+                initializationFont(icons, "icons.ttf");
+                initializationFont(monsterrat, "monsterrat.ttf");
+                initializationFont(profont, "profont.ttf");
+                initializationFont(sf_bold, "sf_bold.ttf");
+                initializationFont(sf_medium, "sf_medium.ttf");
+                initializationFont(iconsWex, "iconsWex.ttf");
+                initializationFont(hud, "hud.ttf");
+                initializationFont(gilroy, "gilroy.ttf");
+                initializationFont(gilroy_bold, "gilroy-bold.ttf");
+                initializationFont(icomoon, "icomoon.ttf");
+            } catch (Throwable t) {
+                t.printStackTrace();
+            } finally {
+                initialized = true;
+            }
+        }, "WexraClient-FontLoader");
+        fontThread.setDaemon(true);
+        fontThread.start();
+    }
 
-        initialized = true;
+    public boolean isInitialized() {
+        return initialized;
     }
 
     private void initializationFont(RenderFonts[] fontArray, String fontName) {
@@ -49,9 +71,13 @@ public class FontUtils {
         try {
             Font font = Font.createFont(Font.TRUETYPE_FONT, Objects.requireNonNull(FontUtils.class.getResourceAsStream(fontsDir + fontName)));
             for (int i = 1; i < fontArray.length; i++) {
-                fontArray[i] = new RenderFonts(font, i);
+                try {
+                    fontArray[i] = new RenderFonts(font, i);
+                } catch (Throwable innerT) {
+                    // Bu boyut icin basarisiz oldu, digerlerine devam et.
+                }
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             e.printStackTrace();
         }
     }
