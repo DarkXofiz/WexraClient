@@ -1,5 +1,3 @@
-name: Build
-
 on:
   push:
     branches: [ main ]
@@ -23,3 +21,9 @@ jobs:
 
       - name: Build with Gradle
         run: ./gradlew build
+
+      - name: Upload built jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: WexraClient
+          path: build/libs/*.jar
