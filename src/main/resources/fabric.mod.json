@@ -1,0 +1,28 @@
+{
+	"schemaVersion": 1,
+	"id": "wexraclient",
+	"version": "${version}",
+	"name": "Wexra Client",
+	"description": "Wexra Client for Minecraft 1.21.x",
+	"authors": [
+		"Bane"
+	],
+	"contact": {},
+	"license": "MIT",
+	"icon": "assets/wexraclient/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"dev.wexra.WexraClient"
+		]
+	},
+	"mixins": [
+		"wexraclient.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.16.14",
+		"minecraft": "~1.21.4",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}
