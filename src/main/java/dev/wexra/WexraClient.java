@@ -72,6 +72,7 @@ public final class WexraClient implements ModInitializer {
 	}
 
 	public void init() {
+		if (initialized) return;
 		ensureDirectoryExists();
 		try {
 			Manager.SYNC_MANAGER = new SyncManager();

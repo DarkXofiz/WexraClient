@@ -29,8 +29,4 @@ public abstract class MixinMinecraftClient implements IMinecraft {
     private void stop(CallbackInfo ci) {
         WexraClient.getInstance().shutDown();
     }
-    @Inject(method = "<init>", at = @At("TAIL"))
-    private void init(CallbackInfo callbackInfo) {
-        WexraClient.getInstance().init();
-    }
 }
