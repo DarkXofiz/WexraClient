@@ -1,6 +1,6 @@
 package dev.wexra.manager.fontManager;
 
-import java.awt.Font;
+import java.io.InputStream;
 import java.util.Objects;
 
 @SuppressWarnings("All")
@@ -25,14 +25,15 @@ public class FontUtils {
     private boolean initialized = false;
     private volatile boolean initStarted = false;
 
-    // NOT: Bu ortamda (Android/PojavLauncher, headless AWT) java.awt.Font
-    // islemleri (createFont, deriveFont, FontRenderContext vb.) hata
-    // firlatmak yerine bazen JVM icinde sonsuza kadar bekleyebiliyor
-    // (hang). Bu yuzden butun font yukleme islemini ayri bir daemon
-    // thread'de yapiyoruz; boylece bu islem asla ana/render thread'ini
-    // bloklamaz. Oyun acilirken fontlar henuz hazir degilse, ilgili
-    // dizi elemani null kalir ve cizim kodu bunu atlamalidir - bu,
-    // istemcinin sonsuza kadar donmesinden cok daha iyi bir durumdur.
+    // NOT: Font yukleme artik java.awt.Font degil, stb_truetype tabanli
+    // TrueTypeFont uzerinden yapiliyor, yani Android/PojavLauncher gibi
+    // ortamlardaki AWT/Toolkit donma riski tamamen ortadan kalkti.
+    // Yine de bu islemi ayri bir thread'de yapip, ana thread'i EN FAZLA
+    // 8 saniye bekletiyoruz (join ile). Boylece:
+    //  - Eger font yukleme cok yavas/donarsa oyun sonsuza kadar kilitlenmez,
+    //  - Eger font yukleme normal hizda biterse (beklenen durum), ana menu
+    //    ilk kez cizilmeden ONCE fontlar hazir olur ve null-pointer riski
+    //    (dizi elemani henuz doldurulmadan kullanilmasi) ortadan kalkar.
     public void init() {
         if (initStarted) return;
         initStarted = true;
@@ -60,6 +61,15 @@ public class FontUtils {
         }, "WexraClient-FontLoader");
         fontThread.setDaemon(true);
         fontThread.start();
+
+        try {
+            fontThread.join(8000);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
+        // 8 saniye icinde bitmediyse arka planda devam etmesine izin
+        // veriyoruz (thread daemon oldugu icin JVM'i kapatmaz), ama
+        // ana thread'i artik bekletmiyoruz.
     }
 
     public boolean isInitialized() {
@@ -68,8 +78,8 @@ public class FontUtils {
 
     private void initializationFont(RenderFonts[] fontArray, String fontName) {
         if (fontArray == null) return;
-        try {
-            Font font = Font.createFont(Font.TRUETYPE_FONT, Objects.requireNonNull(FontUtils.class.getResourceAsStream(fontsDir + fontName)));
+        try (InputStream stream = Objects.requireNonNull(FontUtils.class.getResourceAsStream(fontsDir + fontName))) {
+            TrueTypeFont font = TrueTypeFont.load(stream);
             for (int i = 1; i < fontArray.length; i++) {
                 try {
                     fontArray[i] = new RenderFonts(font, i);

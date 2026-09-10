@@ -9,11 +9,11 @@ import it.unimi.dsi.fastutil.objects.ObjectList;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4f;
 
-import java.awt.*;
-import java.awt.font.FontRenderContext;
-import java.awt.geom.Rectangle2D;
-import java.awt.image.BufferedImage;
+import org.lwjgl.system.MemoryStack;
+
 import java.io.Closeable;
+import java.nio.ByteBuffer;
+import java.nio.IntBuffer;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,6 +29,10 @@ import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.Identifier;
 import dev.wexra.manager.IMinecraft;
 import dev.wexra.util.render.RenderUtil;
+
+import static org.lwjgl.stb.STBTruetype.stbtt_GetCodepointBitmap;
+import static org.lwjgl.stb.STBTruetype.stbtt_GetCodepointHMetrics;
+import static org.lwjgl.stb.STBTruetype.stbtt_FreeBitmap;
 
 @SuppressWarnings("All")
 public class RenderFonts implements Closeable, IMinecraft {
@@ -53,7 +57,6 @@ public class RenderFonts implements Closeable, IMinecraft {
     private final int padding;
     private final String prebakeGlyphs;
     private final float originalSize;
-    private final FontRenderContext sharedFontRenderContext;
 
     private float cachedMaxHeight = 0f;
     private boolean heightDirty = true;
@@ -61,7 +64,8 @@ public class RenderFonts implements Closeable, IMinecraft {
     private final Map<String, Float> widthCache = new ConcurrentHashMap<>();
     private static final int MAX_WIDTH_CACHE_SIZE = 1000;
 
-    private Font font;
+    private final TrueTypeFont font;
+    private final float scale;
     private Future<Void> prebakeGlyphsFuture;
 
 
@@ -89,26 +93,14 @@ public class RenderFonts implements Closeable, IMinecraft {
     private static final ThreadLocal<StringBuilder> STRING_BUILDER_POOL = ThreadLocal.withInitial(StringBuilder::new);
     private static final ThreadLocal<char[]> CHAR_ARRAY_BUFFER = ThreadLocal.withInitial(() -> new char[1024]);
 
-    public RenderFonts(Font font, float sizePx, int charsPerPage, int padding, String prebakeGlyphs) {
+    public RenderFonts(TrueTypeFont font, float sizePx, int charsPerPage, int padding, String prebakeGlyphs) {
         this.originalSize = sizePx;
         this.charsPerPage = charsPerPage;
         this.padding = padding;
         this.prebakeGlyphs = prebakeGlyphs;
+        this.font = font;
+        this.scale = font.scaleForPixelHeight(sizePx);
 
-        BufferedImage tempImage = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = tempImage.createGraphics();
-        this.sharedFontRenderContext = g.getFontRenderContext();
-        g.dispose();
-
-        initializeFont(font, sizePx);
-    }
-
-    public RenderFonts(Font font, float sizePx) {
-        this(font, sizePx, 256, 5, null);
-    }
-
-    private void initializeFont(Font baseFont, float sizePx) {
-        this.font = baseFont.deriveFont(sizePx);
         if (prebakeGlyphs != null && !prebakeGlyphs.isEmpty()) {
             prebakeGlyphsFuture = ASYNC_WORKER.submit(() -> {
                 for (char c : prebakeGlyphs.toCharArray()) {
@@ -118,6 +110,10 @@ public class RenderFonts implements Closeable, IMinecraft {
                 return null;
             });
         }
+    }
+
+    public RenderFonts(TrueTypeFont font, float sizePx) {
+        this(font, sizePx, 256, 5, null);
     }
 
     public void drawLeftAligned(MatrixStack ms, String text, float x, float y, int color) {
@@ -438,8 +434,8 @@ public class RenderFonts implements Closeable, IMinecraft {
 
         int base = charsPerPage * (glyphChar / charsPerPage);
         String id = generateRandomId(16);
-        GlyphMap newMap = new GlyphMap((char) base, (char) (base + charsPerPage), font,
-                Identifier.of("font", "temp/" + id), padding, sharedFontRenderContext);
+        GlyphMap newMap = new GlyphMap((char) base, (char) (base + charsPerPage), font, scale,
+                Identifier.of("font", "temp/" + id), padding);
         maps.add(newMap);
         return newMap.getGlyph(glyphChar);
     }
@@ -488,22 +484,22 @@ public class RenderFonts implements Closeable, IMinecraft {
 
     private class GlyphMap {
         private final Char2ObjectMap<Glyph> glyphs = new Char2ObjectArrayMap<>();
-        private final Font font;
+        private final TrueTypeFont font;
+        private final float scale;
         private final Identifier bindToTexture;
         private final char fromIncl, toExcl;
         private final int pixelPadding;
-        private final FontRenderContext fontRenderContext;
         private int width, height;
         private float invWidth, invHeight;
         private boolean generated = false;
 
-        GlyphMap(char from, char to, Font font, Identifier id, int padding, FontRenderContext frc) {
+        GlyphMap(char from, char to, TrueTypeFont font, float scale, Identifier id, int padding) {
             this.fromIncl = from;
             this.toExcl = to;
             this.font = font;
+            this.scale = scale;
             this.bindToTexture = id;
             this.pixelPadding = padding;
-            this.fontRenderContext = frc;
         }
 
         Glyph getGlyph(char c) {
@@ -523,6 +519,17 @@ public class RenderFonts implements Closeable, IMinecraft {
             generated = false;
         }
 
+        // NOT: Bu metod artik hicbir java.awt sinifina dokunmuyor (Graphics2D,
+        // BufferedImage, FontMetrics, Toolkit vb.). Glyph rasterizasyonu
+        // tamamen stb_truetype (LWJGL'in zaten Minecraft ile birlikte gelen
+        // lwjgl-stb modulu) uzerinden yapiliyor. Bunun sebebi: bazi
+        // Android/PojavLauncher JVM'lerinde java.awt.Toolkit'in ilk kez
+        // dokunulmasi (Font.createFont, Graphics2D, ImageIO, FontMetrics
+        // uzerinden dolayli olarak bile olsa) hata firlatmak yerine JVM'i
+        // sonsuza kadar dondurebiliyor - cunku bu ortamlarda gercek bir
+        // pencere sistemi yok. stb_truetype ham byte'lar uzerinde calisir,
+        // hicbir native pencere/goruntu altyapisina ihtiyac duymaz, bu yuzden
+        // Minecraft'in calistigi her yerde ayni sekilde calisir.
         private void generate() {
             if (generated) return;
 
@@ -530,124 +537,108 @@ public class RenderFonts implements Closeable, IMinecraft {
             int charsPerRow = (int) Math.ceil(Math.sqrt(range));
             int charsPerCol = (int) Math.ceil((double) range / charsPerRow);
 
+            int scaledAscent = Math.max(1, Math.round(font.ascent() * scale));
+            int scaledDescent = Math.round(font.descent() * scale);
+            int lineHeight = Math.max(1, scaledAscent - scaledDescent);
+            int fallbackSize = lineHeight;
+
             int maxCharWidth = 0;
-            int maxCharHeight = 0;
             CharMetrics[] metrics = new CharMetrics[range];
 
-            // NOT: Bu ortamda (Android/PojavLauncher, headless AWT) hem
-            // font.getStringBounds(...) hem de Graphics2D.getFontMetrics(...)
-            // HeadlessException firlatabiliyor - JDK ic mekanizmasi verilen
-            // FontRenderContext/Graphics'i yoksayip ekran cihazina erismeye
-            // calisiyor. Bu yuzden metrik probu tamamen catch(Throwable) ile
-            // sariyoruz; basarisiz olursa font boyutuna dayali guvenli bir
-            // tahmine geri donuyoruz ve asla istemciyi cokertmiyoruz.
-            FontMetrics probeMetrics = null;
-            try {
-                BufferedImage probeImage = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
-                Graphics2D probeGraphics = probeImage.createGraphics();
-                try {
-                    probeMetrics = probeGraphics.getFontMetrics(font);
-                } finally {
-                    probeGraphics.dispose();
-                }
-            } catch (Throwable t) {
-                probeMetrics = null;
-            }
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                IntBuffer advanceWidth = stack.mallocInt(1);
+                IntBuffer leftSideBearing = stack.mallocInt(1);
 
-            int fallbackSize = Math.max(1, Math.round(font.getSize2D()));
-
-            for (int i = 0; i < range; i++) {
-                char c = (char) (fromIncl + i);
-                int w, h;
-                if (probeMetrics != null) {
+                for (int i = 0; i < range; i++) {
+                    char c = (char) (fromIncl + i);
+                    int w;
                     try {
-                        w = probeMetrics.charWidth(c);
-                        h = probeMetrics.getAscent() + probeMetrics.getDescent();
+                        stbtt_GetCodepointHMetrics(font.info(), c, advanceWidth, leftSideBearing);
+                        w = Math.round(advanceWidth.get(0) * scale);
                     } catch (Throwable t) {
-                        // Belirli bir karakter icin AWT yine de patlarsa,
-                        // istemciyi cokertmek yerine kaba tahmine geri don.
                         w = fallbackSize;
-                        h = fallbackSize;
                     }
-                } else {
-                    w = fallbackSize;
-                    h = fallbackSize;
+                    if (w <= 0) w = fallbackSize;
+
+                    maxCharWidth = Math.max(maxCharWidth, w);
+                    metrics[i] = new CharMetrics(c, w, lineHeight);
                 }
-                if (w <= 0) w = 1;
-                if (h <= 0) h = 1;
-                maxCharWidth = Math.max(maxCharWidth, w);
-                maxCharHeight = Math.max(maxCharHeight, h);
-                metrics[i] = new CharMetrics(c, w, h);
             }
 
             this.width = Math.max((maxCharWidth + pixelPadding) * charsPerRow + pixelPadding, 1);
-            this.height = Math.max((maxCharHeight + pixelPadding) * charsPerCol + pixelPadding, 1);
+            this.height = Math.max((lineHeight + pixelPadding) * charsPerCol + pixelPadding, 1);
             this.invWidth = 1f / width;
             this.invHeight = 1f / height;
 
-            BufferedImage img = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
-            Graphics2D g2d = img.createGraphics();
-
-            g2d.setComposite(AlphaComposite.Clear);
-            g2d.fillRect(0, 0, width, height);
-            g2d.setComposite(AlphaComposite.SrcOver);
-            g2d.setColor(Color.WHITE);
-            g2d.setFont(font);
-
-            g2d.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
-            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-
-            FontMetrics fm = null;
-            try {
-                fm = g2d.getFontMetrics();
-            } catch (Throwable t) {
-                fm = null;
-            }
-            int baseAscent = (fm != null) ? fm.getAscent() : Math.round(font.getSize2D() * 0.8f);
-
-            for (int i = 0; i < metrics.length; i++) {
-                CharMetrics cm = metrics[i];
-                int row = i / charsPerRow;
-                int col = i % charsPerRow;
-
-                int x = col * (maxCharWidth + pixelPadding) + pixelPadding;
-                int y = row * (maxCharHeight + pixelPadding) + pixelPadding + baseAscent;
-
-                Glyph glyph = new Glyph(x, y - baseAscent, cm.width, cm.height, cm.character, this);
-                glyphs.put(cm.character, glyph);
-                try {
-                    g2d.drawString(String.valueOf(cm.character), x, y);
-                } catch (Throwable ignored) {
-                    // Bu karakter cizilemedi (ör. headless/font hatasi); bos birak,
-                    // istemciyi cokertme.
+            try (NativeImage atlas = new NativeImage(NativeImage.Format.RGBA, width, height, false)) {
+                for (int py = 0; py < height; py++) {
+                    for (int px = 0; px < width; px++) {
+                        atlas.setColorArgb(px, py, 0);
+                    }
                 }
-            }
 
-            g2d.dispose();
-            registerBufferedImageTexture(bindToTexture, img);
+                for (int i = 0; i < metrics.length; i++) {
+                    CharMetrics cm = metrics[i];
+                    int row = i / charsPerRow;
+                    int col = i % charsPerRow;
+
+                    int cellX = col * (maxCharWidth + pixelPadding) + pixelPadding;
+                    int cellY = row * (lineHeight + pixelPadding) + pixelPadding;
+
+                    glyphs.put(cm.character, new Glyph(cellX, cellY, cm.width, cm.height, cm.character, this));
+
+                    try {
+                        drawGlyphBitmap(atlas, cm.character, cellX, cellY + scaledAscent);
+                    } catch (Throwable ignored) {
+                        // Bu karakter cizilemedi, bos (seffaf) birak, istemciyi cokertme.
+                    }
+                }
+
+                NativeImageBackedTexture texture = new NativeImageBackedTexture(atlas);
+                texture.upload();
+                mc.getTextureManager().registerTexture(bindToTexture, texture);
+            } catch (Throwable ignored) {}
+
             generated = true;
         }
 
-        private void registerBufferedImageTexture(Identifier id, BufferedImage img) {
-            try (NativeImage nativeImage = new NativeImage(NativeImage.Format.RGBA, img.getWidth(), img.getHeight(), false)) {
-                int[] pixels = new int[img.getWidth() * img.getHeight()];
-                img.getRGB(0, 0, img.getWidth(), img.getHeight(), pixels, 0, img.getWidth());
+        /**
+         * Rasterizes a single codepoint via stb_truetype and blits the resulting
+         * 8-bit alpha bitmap into the atlas as a white/alpha glyph (color tinting
+         * happens later at draw time via the vertex color), anchored so that
+         * (originX, baselineY) matches the character's baseline position.
+         */
+        private void drawGlyphBitmap(NativeImage atlas, char c, int originX, int baselineY) {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                IntBuffer bw = stack.mallocInt(1);
+                IntBuffer bh = stack.mallocInt(1);
+                IntBuffer xoff = stack.mallocInt(1);
+                IntBuffer yoff = stack.mallocInt(1);
 
-                for (int i = 0; i < pixels.length; i++) {
-                    int argb = pixels[i];
-                    int a = (argb >>> 24);
-                    int r = (argb >>> 16) & 0xFF;
-                    int g = (argb >>> 8) & 0xFF;
-                    int b = argb & 0xFF;
-                    int abgr = (a << 24) | (b << 16) | (g << 8) | r;
-                    nativeImage.setColorArgb(i % img.getWidth(), i / img.getWidth(), abgr);
+                ByteBuffer bitmap = stbtt_GetCodepointBitmap(font.info(), scale, scale, c, bw, bh, xoff, yoff);
+                if (bitmap == null) return;
+
+                try {
+                    int glyphWidth = bw.get(0);
+                    int glyphHeight = bh.get(0);
+                    int startX = originX + xoff.get(0);
+                    int startY = baselineY + yoff.get(0);
+
+                    for (int gy = 0; gy < glyphHeight; gy++) {
+                        int py = startY + gy;
+                        if (py < 0 || py >= height) continue;
+                        for (int gx = 0; gx < glyphWidth; gx++) {
+                            int px = startX + gx;
+                            if (px < 0 || px >= width) continue;
+                            int alpha = bitmap.get(gy * glyphWidth + gx) & 0xFF;
+                            if (alpha == 0) continue;
+                            atlas.setColorArgb(px, py, (alpha << 24) | 0x00FFFFFF);
+                        }
+                    }
+                } finally {
+                    stbtt_FreeBitmap(bitmap);
                 }
-
-                NativeImageBackedTexture texture = new NativeImageBackedTexture(nativeImage);
-                texture.upload();
-                mc.getTextureManager().registerTexture(id, texture);
-            } catch (Throwable ignored) {}
+            }
         }
     }
 

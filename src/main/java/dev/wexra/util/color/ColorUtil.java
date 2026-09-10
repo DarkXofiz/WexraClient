@@ -1,4 +1,5 @@
 package dev.wexra.util.color;
+import net.minecraft.client.texture.NativeImage;
 import net.minecraft.resource.Resource;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.MathHelper;
@@ -6,10 +7,9 @@ import dev.wexra.manager.IMinecraft;
 import dev.wexra.manager.Manager;
 import dev.wexra.manager.themeManager.StyleManager;
 
-import javax.imageio.ImageIO;
 import java.awt.*;
-import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -21,13 +21,21 @@ public class ColorUtil implements IMinecraft {
     public static final int hud_color = new Color(25, 22, 33, 220).getRGB();
     public static final int hud_color2 = new Color(16, 15, 19, 255).getRGB();
 
-    private static final Map<Identifier, BufferedImage> CACHED_IMAGES = new HashMap<>();
+    // NOT: Bu sinif once javax.imageio.ImageIO/java.awt.image.BufferedImage
+    // kullaniyordu. ImageIO ilk cagrildiginda dolayli olarak java.awt.Toolkit'i
+    // baslatir; bazi Android/PojavLauncher JVM'lerinde bu baslatma islemi
+    // hata firlatmak yerine sonsuza kadar donebiliyor. NativeImage,
+    // Minecraft'in kendi PNG cozucusu oldugu icin AWT'ye hic dokunmuyor ve
+    // bu ortamlarda da guvenle calisiyor.
+    private static final Map<Identifier, NativeImage> CACHED_IMAGES = new HashMap<>();
     public static void loadImage(Identifier identifier) {
         if (!CACHED_IMAGES.containsKey(identifier)) {
             try {
                 Optional<Resource> resourceOptional = mc.getResourceManager().getResource(identifier);
                 if (resourceOptional.isPresent()) {
-                    CACHED_IMAGES.put(identifier, ImageIO.read(resourceOptional.get().getInputStream()));
+                    try (InputStream stream = resourceOptional.get().getInputStream()) {
+                        CACHED_IMAGES.put(identifier, NativeImage.read(stream));
+                    }
                 }
             } catch (IOException ignored) {}
         }
@@ -41,10 +49,20 @@ public class ColorUtil implements IMinecraft {
     }
 
     public static int getPixelColor(Identifier id, float pixelX, float pixelY) {
-        BufferedImage bufferedImage = CACHED_IMAGES.get(id);
-        int x = Math.max(0, Math.min((int) (pixelX * bufferedImage.getWidth()), bufferedImage.getWidth() - 1));
-        int y = Math.max(0, Math.min((int) (pixelY * bufferedImage.getHeight()), bufferedImage.getHeight() - 1));
-        return bufferedImage.getRGB(x, y);
+        NativeImage image = CACHED_IMAGES.get(id);
+        if (image == null) return 0;
+        int x = Math.max(0, Math.min((int) (pixelX * image.getWidth()), image.getWidth() - 1));
+        int y = Math.max(0, Math.min((int) (pixelY * image.getHeight()), image.getHeight() - 1));
+
+        // NativeImage stores/returns colors packed as ABGR (a<<24|b<<16|g<<8|r),
+        // not the standard Java ARGB that BufferedImage.getRGB used to return.
+        // Convert so callers keep getting the format they already expect.
+        int abgr = image.getColorArgb(x, y);
+        int a = (abgr >>> 24) & 0xFF;
+        int b = (abgr >>> 16) & 0xFF;
+        int g = (abgr >>> 8) & 0xFF;
+        int r = abgr & 0xFF;
+        return (a << 24) | (r << 16) | (g << 8) | b;
     }
 
     public static int blendColors(int color1, int color2, float ratio) {

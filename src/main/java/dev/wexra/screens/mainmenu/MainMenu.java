@@ -51,6 +51,12 @@ public class MainMenu extends Screen {
             shakeOffsetY = 0f;
         }
 
+        if (FontUtils.sf_bold[54] == null || FontUtils.sf_medium[20] == null) {
+            // Fontlar henuz hazir degil (beklenmedik gecikme), bu kareyi
+            // atla, cokme yerine bir sonraki karede tekrar dene.
+            return;
+        }
+
         int titleWidth = (int) FontUtils.sf_bold[54].getWidth(title);
         float titleX = (this.width - titleWidth) / 2f;
         float titleBaseY = this.height / 5f;
@@ -90,6 +96,9 @@ public class MainMenu extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (FontUtils.sf_bold[54] == null) {
+            return super.mouseClicked(mouseX, mouseY, button);
+        }
         int titleWidth = (int) FontUtils.sf_bold[54].getWidth(title);
         float titleX = (this.width - titleWidth) / 2f;
         float titleY = this.height / 5f;
