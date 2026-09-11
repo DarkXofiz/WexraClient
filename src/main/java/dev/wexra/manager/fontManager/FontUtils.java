@@ -34,25 +34,26 @@ public class FontUtils {
     //  - Eger font yukleme normal hizda biterse (beklenen durum), ana menu
     //    ilk kez cizilmeden ONCE fontlar hazir olur ve null-pointer riski
     //    (dizi elemani henuz doldurulmadan kullanilmasi) ortadan kalkar.
+    //
+    // ONEMLI: Kod tabaninda hangi font/boyut kombinasyonlarinin GERCEKTEN
+    // kullanildigi taranarak (FontUtils.xxx[N] seklindeki tum kullanimlar)
+    // SADECE bu kombinasyonlar olusturuluyor. Onceden her font icin 1'den
+    // 255'e kadar TUM boyutlar (13 font x 255 = 3315 nesne) olusturuluyordu;
+    // bunlarin buyuk cogunlugu hic kullanilmiyordu (8 font tamamen,
+    // digerlerinin de sadece birkac boyutu kullaniliyor). Bu, baslangicta
+    // gereksiz yere cok fazla is yapilmasina ve potansiyel zamanlama
+    // sorunlarina yol aciyordu. Simdi sadece ~15 nesne olusturuluyor.
     public void init() {
         if (initStarted) return;
         initStarted = true;
 
         Thread fontThread = new Thread(() -> {
             try {
-                initializationFont(comfortaa, "comfortaa.ttf");
-                initializationFont(durman, "durman.ttf");
-                initializationFont(glitched, "glitched.ttf");
-                initializationFont(icons, "icons.ttf");
-                initializationFont(monsterrat, "monsterrat.ttf");
-                initializationFont(profont, "profont.ttf");
-                initializationFont(sf_bold, "sf_bold.ttf");
-                initializationFont(sf_medium, "sf_medium.ttf");
-                initializationFont(iconsWex, "iconsWex.ttf");
-                initializationFont(hud, "hud.ttf");
-                initializationFont(gilroy, "gilroy.ttf");
-                initializationFont(gilroy_bold, "gilroy-bold.ttf");
-                initializationFont(icomoon, "icomoon.ttf");
+                initializationFont(durman, "durman.ttf", 12, 13, 14, 15, 19, 21);
+                initializationFont(sf_bold, "sf_bold.ttf", 13, 15, 20, 48, 54);
+                initializationFont(sf_medium, "sf_medium.ttf", 16, 20);
+                initializationFont(icomoon, "icomoon.ttf", 20);
+                initializationFont(iconsWex, "iconsWex.ttf", 24);
             } catch (Throwable t) {
                 t.printStackTrace();
             } finally {
@@ -76,13 +77,14 @@ public class FontUtils {
         return initialized;
     }
 
-    private void initializationFont(RenderFonts[] fontArray, String fontName) {
+    private void initializationFont(RenderFonts[] fontArray, String fontName, int... sizes) {
         if (fontArray == null) return;
         try (InputStream stream = Objects.requireNonNull(FontUtils.class.getResourceAsStream(fontsDir + fontName))) {
             TrueTypeFont font = TrueTypeFont.load(stream);
-            for (int i = 1; i < fontArray.length; i++) {
+            for (int size : sizes) {
+                if (size <= 0 || size >= fontArray.length) continue;
                 try {
-                    fontArray[i] = new RenderFonts(font, i);
+                    fontArray[size] = new RenderFonts(font, size);
                 } catch (Throwable innerT) {
                     // Bu boyut icin basarisiz oldu, digerlerine devam et.
                 }

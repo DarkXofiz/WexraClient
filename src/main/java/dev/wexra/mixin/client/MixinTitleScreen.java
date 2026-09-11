@@ -14,7 +14,7 @@ import dev.wexra.WexraClient;
 
 @Mixin(TitleScreen.class)
 public class MixinTitleScreen implements IMinecraft {
-    @Inject(method = "init", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "init", at = @At("RETURN"))
     private void onInit(CallbackInfo ci) {
         try {
             // WexraClient.init() artik burada cagriliyor (MinecraftClient'in
@@ -25,9 +25,15 @@ public class MixinTitleScreen implements IMinecraft {
             // kayit/registry doldurma zamanlamasini asla bozamaz.
             WexraClient.getInstance().init();
 
+            // NOT: Artik @At("HEAD") + cancel() yerine @At("RETURN")
+            // kullaniyoruz. Boylece orijinal TitleScreen.init() KENDI
+            // mantigini (ne yapiyorsa) TAMAMEN calistiriyor, biz sadece
+            // O BITTIKTEN SONRA ekrani degistiriyoruz. Bu, vanilla'nin
+            // init() icinde yaptigi herhangi bir kurulumu atlamamizi
+            // engelleyerek daha guvenli bir yaklasim (ThunderHack gibi
+            // bilinen/stabil projelerin kullandigi yontem).
             if (!ClientManager.legitMode) {
                 mc.setScreen(new MainMenu());
-                ci.cancel();
             }
         } catch (Throwable t) {
             // Beklenmedik bir hata olsa bile orijinal TitleScreen'in
