@@ -6,7 +6,7 @@ import java.util.Objects;
 @SuppressWarnings("All")
 public class FontUtils {
 
-    public final String fontsDir = "/assets/wexraclient/font/";
+    public final String fontsDir = "/wexra_data/fonts/";
 
     public volatile RenderFonts[] comfortaa = new RenderFonts[256];
     public static volatile RenderFonts[] durman = new RenderFonts[256];

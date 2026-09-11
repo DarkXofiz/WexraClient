@@ -109,7 +109,7 @@ public final class WexraClient implements ModInitializer {
 				AudioUtil.playSound("join.wav");
 			}
 			initialized = true;
-		} catch (Exception e) {
+		} catch (Throwable e) {
 			e.printStackTrace();
 		}
 	}

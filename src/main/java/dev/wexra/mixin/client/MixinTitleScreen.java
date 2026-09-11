@@ -16,17 +16,23 @@ import dev.wexra.WexraClient;
 public class MixinTitleScreen implements IMinecraft {
     @Inject(method = "init", at = @At("HEAD"), cancellable = true)
     private void onInit(CallbackInfo ci) {
-        // WexraClient.init() artik burada cagriliyor (MinecraftClient'in
-        // constructor'inda DEGIL). TitleScreen sadece vanilla'nin ilk
-        // resource/registry yuklemesi TAMAMEN basarili bittikten SONRA
-        // acilir, bu yuzden burada calisan (potansiyel olarak biraz zaman
-        // alan, ornegin font yukleme gibi) kod, oyunun kendi ic
-        // kayit/registry doldurma zamanlamasini asla bozamaz.
-        WexraClient.getInstance().init();
+        try {
+            // WexraClient.init() artik burada cagriliyor (MinecraftClient'in
+            // constructor'inda DEGIL). TitleScreen sadece vanilla'nin ilk
+            // resource/registry yuklemesi TAMAMEN basarili bittikten SONRA
+            // acilir, bu yuzden burada calisan (potansiyel olarak biraz zaman
+            // alan, ornegin font yukleme gibi) kod, oyunun kendi ic
+            // kayit/registry doldurma zamanlamasini asla bozamaz.
+            WexraClient.getInstance().init();
 
-        if (!ClientManager.legitMode) {
-            mc.setScreen(new MainMenu());
-            ci.cancel();
+            if (!ClientManager.legitMode) {
+                mc.setScreen(new MainMenu());
+                ci.cancel();
+            }
+        } catch (Throwable t) {
+            // Beklenmedik bir hata olsa bile orijinal TitleScreen'in
+            // acilmasina izin ver, oyunu tamamen bozma.
+            t.printStackTrace();
         }
     }
 }
